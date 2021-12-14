@@ -83,7 +83,7 @@ func configmap(ctx *common.RenderContext) ([]runtime.Object, error) {
 					URL:  "https://www.gitpod.io/blog/",
 				}, {
 					Name: "Community",
-					URL:  "https://community.gitpod.io/",
+					URL:  "https://www.gitpod.io/chat",
 				}},
 				Footer: []Link{{
 					Name: "Docs",
@@ -99,8 +99,8 @@ func configmap(ctx *common.RenderContext) ([]runtime.Object, error) {
 					Type: "GitHub",
 					URL:  "https://github.com/gitpod-io/gitpod",
 				}, {
-					Type: "Discourse",
-					URL:  "https://community.gitpod.io/",
+					Type: "Discord",
+					URL:  "https://www.gitpod.io/chat",
 				}, {
 					Type: "Twitter",
 					URL:  "https://twitter.com/gitpod",
