@@ -139,7 +139,7 @@ RUN sudo install-packages \
     python-dev \
     python-setuptools
 
-RUN bash -c "pip uninstall crcmod; pip install --no-cache-dir -U crcmod"
+RUN bash -c "sudo pip uninstall crcmod; sudo pip install --no-cache-dir -U crcmod"
 
 ### gitpod-core specific gcloud/kubectl config
 # Copy GCloud default config that points to gitpod-dev
@@ -159,7 +159,7 @@ ENV LEEWAY_WORKSPACE_ROOT=/workspace/gitpod
 ENV LEEWAY_REMOTE_CACHE_BUCKET=gitpod-core-leeway-cache-branch
 
 ### AWS Cli ###
-RUN pip install --no-cache-dir awscli
+RUN sudo pip install --no-cache-dir awscli
 
 # Install aws-iam-authenticator
 RUN sudo curl -fsSL -o aws-iam-authenticator "https://amazon-eks.s3.us-west-2.amazonaws.com/1.21.2/2021-07-05/bin/linux/amd64/aws-iam-authenticator" \
