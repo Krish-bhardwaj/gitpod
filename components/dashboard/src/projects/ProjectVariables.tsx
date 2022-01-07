@@ -6,6 +6,8 @@
 
 import { Project, ProjectEnvVar } from "@gitpod/gitpod-protocol";
 import { useContext, useEffect, useState } from "react";
+import CheckBox from "../components/CheckBox";
+import InfoBox from "../components/InfoBox";
 import { Item, ItemField, ItemsList } from "../components/ItemsList";
 import Modal from "../components/Modal";
 import { getGitpodService } from "../service/service";
@@ -52,15 +54,19 @@ export default function () {
             </div>
             : <>
                 <ItemsList>
-                    <Item header={true} className="grid grid-cols-3 items-center">
+                    <Item header={true} className="grid grid-cols-5 items-center">
                         <ItemField>Name</ItemField>
                         <ItemField>Value</ItemField>
+                        <ItemField>In Prebuilds?</ItemField>
+                        <ItemField>In Workspaces?</ItemField>
                         <ItemField></ItemField>
                     </Item>
                     {envVars.map(variable => {
-                        return <Item className="grid grid-cols-3 items-center">
+                        return <Item className="grid grid-cols-5 items-center">
                             <ItemField>{variable.name}</ItemField>
                             <ItemField>****</ItemField>
+                            <ItemField>Visible</ItemField>
+                            <ItemField>{variable.censored ? 'Censored' : 'Visible'}</ItemField>
                             <ItemField className="text-right"><button onClick={() => deleteEnvVar(variable.id)}>x</button></ItemField>
                         </Item>
                     })}
@@ -73,6 +79,7 @@ export default function () {
 function AddVariableModal(props: { project?: Project, onClose: () => void }) {
     const [ name, setName ] = useState<string>("");
     const [ value, setValue ] = useState<string>("");
+    const [ censored, setCensored ] = useState<boolean>(false);
     const [ error, setError ] = useState<Error | undefined>();
 
     const addVariable = async () => {
@@ -80,7 +87,7 @@ function AddVariableModal(props: { project?: Project, onClose: () => void }) {
             return;
         }
         try {
-            await getGitpodService().server.setProjectEnvironmentVariable(props.project.id, name, value);
+            await getGitpodService().server.setProjectEnvironmentVariable(props.project.id, name, value, censored);
             props.onClose();
         } catch (err) {
             setError(err);
@@ -101,10 +108,19 @@ function AddVariableModal(props: { project?: Project, onClose: () => void }) {
                 <h4>Value</h4>
                 <input className="w-full" type="text" name="value" value={value} onChange={e => setValue(e.target.value)} />
             </div>
+            <div className="mt-4">
+                <CheckBox title="Visible in Prebuilds?" desc="All Project Variables are visible in Prebuilds" checked={true} disabled={true} />
+            </div>
+            <div className="mt-4">
+                <CheckBox title="Visible in Workspaces?" desc="Choose whether this Variable should be visible in Workspaces" checked={!censored} onChange={() => setCensored(!censored)} />
+            </div>
+            {censored && <div className="mt-4">
+                <InfoBox><strong>Never log this value</strong>: Prebuild logs are always visible in Workspaces.</InfoBox>
+            </div>}
         </div>
         <div className="flex justify-end mt-6">
             <button className="secondary" onClick={props.onClose}>Cancel</button>
-            <button className="ml-2" onClick={addVariable} >Add Variable</button>
+            <button className="ml-2" onClick={addVariable}>Add Variable</button>
         </div>
     </Modal>;
 }

@@ -16,12 +16,8 @@ export class DBProjectEnvVar implements ProjectEnvVarWithValue {
     @PrimaryColumn(TypeORM.UUID_COLUMN_TYPE)
     id: string;
 
-    // projectId must be part of the primary key as otherwise malicious users could overwrite
-    // the value of arbitrary user env vars because we use TypeORM.save. If the projectId were
-    // not part of the primary key, this save call would overwrite env vars with arbitrary IDs,
-    // allowing an attacker to steal other users environment variables.
-    // But projectId is part of the primary key and we ensure that users can only overwrite/set variables
-    // that belong to them.
+    // Having projectId be part of the primary key is a good 2nd line of defense against malicious users
+    // overwriting the value of arbitrary project env vars.
     @PrimaryColumn(TypeORM.UUID_COLUMN_TYPE)
     projectId: string;
 
@@ -36,6 +32,9 @@ export class DBProjectEnvVar implements ProjectEnvVarWithValue {
         )
     })
     value: string;
+
+    @Column()
+    censored: boolean;
 
     @Column("varchar")
     creationTime: string;
