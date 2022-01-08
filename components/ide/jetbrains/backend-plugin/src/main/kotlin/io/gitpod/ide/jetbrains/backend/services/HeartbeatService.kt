@@ -6,123 +6,110 @@ package io.gitpod.ide.jetbrains.backend.services
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.diagnostic.logger
-import io.gitpod.gitpodprotocol.api.ConnectionHelper
+import com.intellij.openapi.diagnostic.thisLogger
+import io.gitpod.gitpodprotocol.api.GitpodClient
+import io.gitpod.gitpodprotocol.api.GitpodServerLauncher
 import io.gitpod.gitpodprotocol.api.entities.SendHeartBeatOptions
 import io.gitpod.ide.jetbrains.backend.services.ControllerStatusService.ControllerStatus
-import io.gitpod.ide.jetbrains.backend.utils.Retrier.retry
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
-import kotlinx.coroutines.runBlocking
-import java.io.IOException
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.concurrent.thread
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import javax.websocket.DeploymentException
+import kotlin.coroutines.coroutineContext
 import kotlin.random.Random.Default.nextInt
 
 @Service
 class HeartbeatService : Disposable {
-    private val logger = logger<HeartbeatService>()
 
-    @Suppress("MagicNumber")
-    private val intervalInSeconds = 30
-
-    private val heartbeatClient = AtomicReference<HeartbeatClient>()
-    private val status = AtomicReference(
-        ControllerStatus(
+    private val job = GlobalScope.launch {
+        val info = SupervisorInfoService.fetch()
+        val client = GitpodClient()
+        launch {
+            connectToServer(info, client)
+        }
+        val intervalInSeconds = 30
+        var current = ControllerStatus(
             connected = false,
             secondsSinceLastActivity = 0
         )
-    )
-    private val closed = AtomicBoolean(false)
+        while (isActive) {
+            try {
+                val previous = current;
+                current = ControllerStatusService.fetch()
 
-    init {
-        logger.info("Service initiating")
+                val maxIntervalInSeconds = intervalInSeconds + nextInt(5, 15)
+                val wasClosed: Boolean? = when {
+                    current.connected != previous.connected -> !current.connected
+                    current.connected && current.secondsSinceLastActivity <= maxIntervalInSeconds -> false
+                    else -> null
+                }
 
-        @Suppress("MagicNumber")
-        thread(name = "gitpod-heartbeat", contextClassLoader = this.javaClass.classLoader) {
-            runBlocking {
-                while (!closed.get()) {
-                    checkActivity(intervalInSeconds + nextInt(5, 15))
-                    delay(intervalInSeconds * 1000L)
+                if (wasClosed != null) {
+                    client.server.sendHeartBeat(SendHeartBeatOptions(info.instanceId, wasClosed)).await()
+                }
+            } catch (t: Throwable) {
+                thisLogger().error("gitpod: failed to check activity:", t)
+            }
+            delay(intervalInSeconds * 1000L)
+        }
+    }
+
+    private suspend fun connectToServer(info: SupervisorInfoService.Info, client: GitpodClient) {
+        val launcher = GitpodServerLauncher.create(client)
+        val connect = {
+            val originalClassLoader = Thread.currentThread().contextClassLoader
+            try {
+                // see https://intellij-support.jetbrains.com/hc/en-us/community/posts/360003146180/comments/360000376240
+                Thread.currentThread().contextClassLoader = HeartbeatService::class.java.classLoader
+                launcher.listen(
+                    "wss://${info.host.split("//").last()}/api/v1",
+                    info.workspaceUrl,
+                    "jetbrains-backend-plugin",
+                    // TODO(ak) read from properties
+                    "1.0-SNAPSHOT",
+                    info.authToken
+                )
+            } finally {
+                Thread.currentThread().contextClassLoader = originalClassLoader;
+            }
+        }
+
+        val minReconnectionDelay = 2 * 1000L
+        val maxReconnectionDelay = 30 * 1000L
+        val reconnectionDelayGrowFactor = 1.5;
+        var reconnectionDelay = minReconnectionDelay;
+        while (coroutineContext.isActive) {
+            try {
+                val f = connect()
+                reconnectionDelay = minReconnectionDelay
+                val reason = f.await()
+                if (coroutineContext.isActive) {
+                    thisLogger().warn("gitpod server: connection closed, reconnecting after $reconnectionDelay milliseconds: $reason")
+                } else {
+                    thisLogger().info("gitpod server: connection permanently closed: $reason")
+                }
+            } catch (e: DeploymentException) {
+                thisLogger().error("gitpod server: failed to establish connection:", e)
+                return;
+            } catch (t: Throwable) {
+                if (coroutineContext.isActive) {
+                    thisLogger().warn(
+                        "gitpod server: failed to connect, trying again after $reconnectionDelay milliseconds:",
+                        t
+                    )
+                } else {
+                    thisLogger().error("gitpod server: connection permanently closed: $t")
                 }
             }
-        }
-    }
-
-    private suspend fun checkActivity(maxIntervalInSeconds: Int) {
-        logger.info("Checking activity")
-        val status = try {
-            ControllerStatusService.fetch()
-        } catch (e: IOException) {
-            logger.error(e.message, e)
-            return@checkActivity
-        }
-        val previousStatus = this.status.getAndSet(status)
-
-        val wasClosed: Boolean? = when {
-            status.connected != previousStatus.connected -> !status.connected
-            status.connected && status.secondsSinceLastActivity <= maxIntervalInSeconds -> false
-            else -> null
-        }
-
-        if (wasClosed != null) {
-            @Suppress("TooGenericExceptionCaught")
-            return try {
-                sendHeartbeat(wasClosed)
-            } catch (e: Exception) {
-                logger.error("Failed to send heartbeat with wasClosed=$wasClosed", e)
+            delay(reconnectionDelay)
+            reconnectionDelay = (reconnectionDelay * reconnectionDelayGrowFactor).toLong()
+            if (reconnectionDelay > maxReconnectionDelay) {
+                reconnectionDelay = maxReconnectionDelay
             }
         }
     }
 
-    /**
-     * @throws DeploymentException
-     * @throws IOException
-     * @throw IllegalStateException
-     */
-    @Synchronized
-    private suspend fun sendHeartbeat(wasClosed: Boolean = false) {
-        retry(2, logger) {
-            if (heartbeatClient.get() == null) {
-                heartbeatClient.set(createHeartbeatClient())
-            }
-
-            @Suppress("TooGenericExceptionCaught") // Unsure what exceptions might be thrown
-            try {
-                heartbeatClient.get()!!(wasClosed).await()
-                logger.info("Heartbeat sent with wasClosed=$wasClosed")
-            } catch (e: Exception) {
-                // If connection fails for some reason,
-                // remove the reference to the existing server.
-                heartbeatClient.set(null)
-                throw e
-            }
-        }
-    }
-
-    /**
-     * @throws DeploymentException
-     * @throws IOException
-     * @throws IllegalStateException
-     */
-    private suspend fun createHeartbeatClient(): HeartbeatClient {
-        logger.info("Creating HeartbeatClient")
-        val supervisorInfo = SupervisorInfoService.fetch()
-
-        val server = ConnectionHelper().connect(
-            "wss://${supervisorInfo.host.split("//").last()}/api/v1",
-            supervisorInfo.workspaceUrl,
-            supervisorInfo.authToken
-        ).server()
-
-        return { wasClosed: Boolean ->
-            server.sendHeartBeat(SendHeartBeatOptions(supervisorInfo.instanceId, wasClosed))
-        }
-    }
-
-    override fun dispose() = closed.set(true)
+    override fun dispose() = job.cancel()
 }
-
-typealias HeartbeatClient = (Boolean) -> CompletableFuture<Void>

@@ -4,35 +4,28 @@
 
 package io.gitpod.ide.jetbrains.backend.services
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonSetter
 import com.fasterxml.jackson.annotation.Nulls
-import com.intellij.openapi.diagnostic.logger
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.PropertyNamingStrategies
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.gitpod.ide.jetbrains.backend.utils.Retrier.retry
-import io.ktor.client.HttpClient
-import io.ktor.client.features.HttpTimeout
-import io.ktor.client.features.json.JacksonSerializer
-import io.ktor.client.features.json.JsonFeature
-import io.ktor.client.request.get
+import org.jetbrains.ide.BuiltInServerManager
 import java.io.IOException
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
 
 object ControllerStatusService {
-    private val logger = logger<ControllerStatusService>()
-
-    private const val PORT = 63342
+    private val port = BuiltInServerManager.getInstance().port
     private val cwmToken = System.getenv("CWM_HOST_STATUS_OVER_HTTP_TOKEN")
-
-    private val client: HttpClient by lazy {
-        HttpClient {
-            install(HttpTimeout) {
-                @Suppress("MagicNumber")
-                requestTimeoutMillis = 2000
-            }
-            install(JsonFeature) {
-                serializer = JacksonSerializer()
-            }
-        }
-    }
+    private val httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.ALWAYS)
+        .connectTimeout(Duration.ofSeconds(2))
+        .build()
+    private val jacksonMapper = jacksonObjectMapper()
+        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
 
     data class ControllerStatus(val connected: Boolean, val secondsSinceLastActivity: Int)
 
@@ -41,34 +34,39 @@ object ControllerStatusService {
      */
     suspend fun fetch(): ControllerStatus =
         @Suppress("MagicNumber")
-        retry(3, logger) {
-            @Suppress("TooGenericExceptionCaught") // Unsure what exceptions Ktor might throw
-            val response: Response = try {
-                client.get("http://localhost:$PORT/codeWithMe/unattendedHostStatus?token=$cwmToken")
-            } catch (e: Exception) {
-                throw IOException("Failed to retrieve controller status.", e)
+        retry(3) {
+            val httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:$port/codeWithMe/unattendedHostStatus?token=$cwmToken"))
+                .header("Content-Type", "application/json")
+                .GET()
+                .build()
+            val response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() !== 200) {
+                throw IOException("gitpod: failed to retrieve controller status: ${response.statusCode()}")
+            }
+            val status = with(jacksonMapper) {
+                propertyNamingStrategy = PropertyNamingStrategies.LowerCamelCaseStrategy()
+                readValue(response.body(), ControllerStatusResponse::class.java)
             }
 
-            if (response.projects.isEmpty()) {
+            if (status.projects.isEmpty()) {
                 return@retry ControllerStatus(false, 0)
             }
 
             return@retry ControllerStatus(
-                response.projects[0].controllerConnected,
-                response.projects[0].secondsSinceLastControllerActivity
+                status.projects[0].controllerConnected,
+                status.projects[0].secondsSinceLastControllerActivity
             )
         }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private data class Response(
-        val appPid: Int,
+    private data class ControllerStatusResponse(
         @JsonSetter(nulls = Nulls.AS_EMPTY)
         val projects: List<Project>
     ) {
-        @JsonIgnoreProperties(ignoreUnknown = true)
         data class Project(
             val controllerConnected: Boolean,
             val secondsSinceLastControllerActivity: Int
         )
     }
+
 }

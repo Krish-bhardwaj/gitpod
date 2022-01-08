@@ -4,9 +4,7 @@
 
 package io.gitpod.ide.jetbrains.backend.services
 
-import com.intellij.openapi.diagnostic.logger
 import io.gitpod.ide.jetbrains.backend.utils.Retrier.retry
-import io.gitpod.supervisor.api.Info
 import io.gitpod.supervisor.api.Info.WorkspaceInfoRequest
 import io.gitpod.supervisor.api.InfoServiceGrpc
 import io.gitpod.supervisor.api.Token.GetTokenRequest
@@ -15,8 +13,10 @@ import io.grpc.ManagedChannelBuilder
 import kotlinx.coroutines.guava.asDeferred
 
 object SupervisorInfoService {
-    private val logger = logger<SupervisorInfoService>()
     private const val SUPERVISOR_ADDRESS = "localhost:22999"
+
+    // there should be only one channel per an application to avoid memory leak
+    private val channel = ManagedChannelBuilder.forTarget(SUPERVISOR_ADDRESS).usePlaintext().build()
 
     data class Info(
         val host: String,
@@ -27,13 +27,9 @@ object SupervisorInfoService {
 
     @Suppress("MagicNumber")
     suspend fun fetch(): Info =
-        retry(3, logger) {
-            val channel = ManagedChannelBuilder
-                .forTarget(SUPERVISOR_ADDRESS)
-                .usePlaintext()
-                .build()
-
-            val infoResponse: io.gitpod.supervisor.api.Info.WorkspaceInfoResponse = InfoServiceGrpc
+        retry(3) {
+            // TODO(ak) retry forever only on network issues, otherwise propagate error
+            val infoResponse = InfoServiceGrpc
                 .newFutureStub(channel)
                 .workspaceInfo(WorkspaceInfoRequest.newBuilder().build())
                 .asDeferred()
