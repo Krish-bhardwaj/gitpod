@@ -16,6 +16,7 @@ import (
 	"github.com/gitpod-io/gitpod/installer/pkg/components/gitpod"
 	ide_proxy "github.com/gitpod-io/gitpod/installer/pkg/components/ide-proxy"
 	imagebuildermk3 "github.com/gitpod-io/gitpod/installer/pkg/components/image-builder-mk3"
+	installationTelemetry "github.com/gitpod-io/gitpod/installer/pkg/components/installation-telemetry"
 	jaegeroperator "github.com/gitpod-io/gitpod/installer/pkg/components/jaeger-operator"
 	"github.com/gitpod-io/gitpod/installer/pkg/components/migrations"
 	"github.com/gitpod-io/gitpod/installer/pkg/components/minio"
@@ -83,6 +84,7 @@ var FullHelmDependencies = common.CompositeHelmFunc(
 var CommonObjects = common.CompositeRenderFunc(
 	dockerregistry.Objects,
 	cluster.Objects,
+	installationTelemetry.Objects,
 )
 
 var CommonHelmDependencies = common.CompositeHelmFunc(
