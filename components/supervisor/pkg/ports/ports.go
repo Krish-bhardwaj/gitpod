@@ -589,7 +589,7 @@ func (pm *Manager) updateProxies() {
 	for _, s := range pm.served {
 		servedPortMap[s.Port] = s.BoundToLocalhost
 	}
-	
+
 	for port := range pm.proxies {
 		if boundToLocalhost, exists := servedPortMap[port]; !exists || !boundToLocalhost {
 			delete(pm.proxies, port)
