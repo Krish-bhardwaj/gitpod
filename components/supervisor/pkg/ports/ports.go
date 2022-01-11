@@ -160,40 +160,40 @@ func (pm *Manager) Run(ctx context.Context, wg *sync.WaitGroup) {
 	defer cancel()
 
 	// set a health check for exposed port trough the proxies
-	go func() {
-		tick := time.NewTicker(2 * time.Second)
-		defer tick.Stop()
+	// go func() {
+	// 	tick := time.NewTicker(2 * time.Second)
+	// 	defer tick.Stop()
 
-		for {
-			<-tick.C
+	// 	for {
+	// 		<-tick.C
 
-			pm.mu.RLock()
-			servedGlobal := make(map[uint32]struct{})
-			for _, p := range pm.served {
-				if !p.BoundToLocalhost {
-					servedGlobal[p.Port] = struct{}{}
-				}
-			}
-			pm.mu.RUnlock()
+	// 		pm.mu.RLock()
+	// 		servedGlobal := make(map[uint32]struct{})
+	// 		for _, p := range pm.served {
+	// 			if !p.BoundToLocalhost {
+	// 				servedGlobal[p.Port] = struct{}{}
+	// 			}
+	// 		}
+	// 		pm.mu.RUnlock()
 
-			for localPort, proxy := range pm.proxies {
-				_, openedGlobal := servedGlobal[localPort]
-				openedLocal := isLocalPortOpen(int(localPort))
-				if !openedLocal && openedGlobal {
-					pm.mu.Lock()
-					delete(pm.proxies, localPort)
-					pm.mu.Unlock()
+	// 		for localPort, proxy := range pm.proxies {
+	// 			_, openedGlobal := servedGlobal[localPort]
+	// 			openedLocal := isLocalPortOpen(int(localPort))
+	// 			if !openedLocal && openedGlobal {
+	// 				pm.mu.Lock()
+	// 				delete(pm.proxies, localPort)
+	// 				pm.mu.Unlock()
 
-					err := proxy.Close()
-					if err != nil {
-						log.WithError(err).WithField("localPort", localPort).Warn("cannot stop localhost proxy")
-					} else {
-						log.WithField("localPort", localPort).Info("localhost proxy has been stopped")
-					}
-				}
-			}
-		}
-	}()
+	// 				err := proxy.Close()
+	// 				if err != nil {
+	// 					log.WithError(err).WithField("localPort", localPort).Warn("cannot stop localhost proxy")
+	// 				} else {
+	// 					log.WithField("localPort", localPort).Info("localhost proxy has been stopped")
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }()
 
 	go pm.E.Run(ctx)
 	exposedUpdates, exposedErrors := pm.E.Observe(ctx)
@@ -575,13 +575,24 @@ func (pm *Manager) updateSlirp() {
 }
 
 func (pm *Manager) updateProxies() {
-	servedLocal := make(map[uint32]struct{})
-	servedGlobal := make(map[uint32]struct{})
-	for _, p := range pm.served {
-		if p.BoundToLocalhost {
-			servedLocal[p.Port] = struct{}{}
-		} else {
-			servedGlobal[p.Port] = struct{}{}
+	// servedLocal := make(map[uint32]struct{})
+	// servedGlobal := make(map[uint32]struct{})
+	// for _, p := range pm.served {
+	// 	if p.BoundToLocalhost {
+	// 		servedLocal[p.Port] = struct{}{}
+	// 	} else {
+	// 		servedGlobal[p.Port] = struct{}{}
+	// 	}
+	// }
+
+	servedPortMap := map[uint32]bool{}
+	for _, s := range pm.served {
+		servedPortMap[s.Port] = s.BoundToLocalhost
+	}
+	
+	for port := range pm.proxies {
+		if boundToLocalhost, exists := servedPortMap[port]; !exists || !boundToLocalhost {
+			delete(pm.proxies, port)
 		}
 	}
 
@@ -865,18 +876,18 @@ func defaultRoutableIP() string {
 	return addresses[0].(*net.IPNet).IP.String()
 }
 
-func isLocalPortOpen(port int) bool {
-	timeout := 1 * time.Second
-	target := fmt.Sprintf("127.0.0.1:%d", port)
-	conn, err := net.DialTimeout("tcp", target, timeout)
-	if err != nil {
-		return false
-	}
+// func isLocalPortOpen(port int) bool {
+// 	timeout := 1 * time.Second
+// 	target := fmt.Sprintf("127.0.0.1:%d", port)
+// 	conn, err := net.DialTimeout("tcp", target, timeout)
+// 	if err != nil {
+// 		return false
+// 	}
 
-	if conn != nil {
-		conn.Close()
-		return true
-	}
+// 	if conn != nil {
+// 		conn.Close()
+// 		return true
+// 	}
 
-	return false
-}
+// 	return false
+// }
